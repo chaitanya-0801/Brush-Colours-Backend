@@ -10,7 +10,7 @@ export function signSession(user) {
 export function setSessionCookie(res, token) {
   res.cookie(cookieName, token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
     secure: config.nodeEnv === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
@@ -20,7 +20,7 @@ export function setSessionCookie(res, token) {
 export function clearSessionCookie(res) {
   res.clearCookie(cookieName, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
     secure: config.nodeEnv === 'production',
     path: '/',
   })

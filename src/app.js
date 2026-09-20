@@ -17,6 +17,8 @@ const bookingSelect = `
   SELECT b.id, b.activity_id AS activityId, a.title AS activityTitle, a.category,
     b.event_date AS eventDate, b.event_time AS eventTime, b.guests, b.city,
     b.venue_address AS venueAddress, b.contact_phone AS contactPhone, b.amount,
+    b.deposit_amount AS depositAmount, b.amount_paid AS amountPaid,
+    CASE WHEN b.amount IS NULL THEN NULL ELSE MAX(b.amount - b.amount_paid, 0) END AS balanceAmount,
     b.status, b.payment_status AS paymentStatus, b.payment_provider AS paymentProvider,
     b.created_at AS createdAt, u.name AS customerName, u.email AS customerEmail
   FROM bookings b
@@ -147,7 +149,7 @@ export function createApp(db) {
       contactPhone,
       amount: activity.price,
       status: activity.price == null ? 'quote_requested' : 'payment_pending',
-      paymentStatus: activity.price == null ? 'not_required' : 'pending',
+      paymentStatus: 'pending',
     }
     db.prepare(`
       INSERT INTO bookings (
@@ -165,9 +167,22 @@ export function createApp(db) {
   app.post('/api/payments/create-order', authRequired, async (req, res, next) => {
     try {
       const booking = db.prepare('SELECT * FROM bookings WHERE id = ? AND user_id = ?').get(String(req.body.bookingId || ''), req.user.id)
+      const paymentKind = req.body.paymentKind === 'balance' ? 'balance' : 'deposit'
       if (!booking) return res.status(404).json({ error: 'Booking not found.' })
-      if (booking.amount == null) return res.status(400).json({ error: 'This booking needs a custom quote before payment.' })
+      if (booking.status === 'cancelled') return res.status(409).json({ error: 'This booking has been cancelled.' })
       if (booking.payment_status === 'paid') return res.status(409).json({ error: 'This booking has already been paid.' })
+
+      const depositAmount = Math.min(booking.deposit_amount, booking.amount ?? booking.deposit_amount)
+      let paymentAmount
+      if (paymentKind === 'deposit') {
+        if (booking.amount_paid >= depositAmount) return res.status(409).json({ error: 'The pre-booking amount has already been paid.' })
+        paymentAmount = depositAmount - booking.amount_paid
+      } else {
+        if (booking.amount == null) return res.status(400).json({ error: 'The owner must confirm the final price before the balance can be paid online.' })
+        if (booking.amount_paid < depositAmount) return res.status(409).json({ error: 'Please pay the pre-booking amount first.' })
+        paymentAmount = booking.amount - booking.amount_paid
+        if (paymentAmount <= 0) return res.status(409).json({ error: 'This booking has no remaining balance.' })
+      }
 
       if (config.razorpayKeyId && config.razorpayKeySecret) {
         const response = await fetch('https://api.razorpay.com/v1/orders', {
@@ -176,18 +191,18 @@ export function createApp(db) {
             Authorization: `Basic ${Buffer.from(`${config.razorpayKeyId}:${config.razorpayKeySecret}`).toString('base64')}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ amount: booking.amount * 100, currency: 'INR', receipt: booking.id }),
+          body: JSON.stringify({ amount: paymentAmount * 100, currency: 'INR', receipt: `${booking.id}-${paymentKind}` }),
         })
         const order = await response.json()
         if (!response.ok) return res.status(502).json({ error: order.error?.description || 'Could not create the payment order.' })
-        db.prepare(`UPDATE bookings SET payment_provider = 'razorpay', payment_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(order.id, booking.id)
-        return res.json({ provider: 'razorpay', keyId: config.razorpayKeyId, orderId: order.id, amount: booking.amount * 100, currency: 'INR' })
+        db.prepare(`UPDATE bookings SET payment_provider = 'razorpay', payment_order_id = ?, payment_order_amount = ?, payment_order_kind = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(order.id, paymentAmount, paymentKind, booking.id)
+        return res.json({ provider: 'razorpay', keyId: config.razorpayKeyId, orderId: order.id, amount: paymentAmount * 100, currency: 'INR', paymentKind })
       }
 
       if (!config.allowDemoPayments) return res.status(503).json({ error: 'Online payments are not configured yet. Please contact the owner.' })
       const orderId = `demo_order_${randomUUID().replaceAll('-', '')}`
-      db.prepare(`UPDATE bookings SET payment_provider = 'development', payment_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId, booking.id)
-      return res.json({ provider: 'development', orderId, amount: booking.amount * 100, currency: 'INR' })
+      db.prepare(`UPDATE bookings SET payment_provider = 'development', payment_order_id = ?, payment_order_amount = ?, payment_order_kind = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId, paymentAmount, paymentKind, booking.id)
+      return res.json({ provider: 'development', orderId, amount: paymentAmount * 100, currency: 'INR', paymentKind })
     } catch (error) {
       next(error)
     }
@@ -200,8 +215,10 @@ export function createApp(db) {
     const signature = String(req.body.signature || '')
     const booking = db.prepare('SELECT * FROM bookings WHERE id = ? AND user_id = ?').get(bookingId, req.user.id)
     if (!booking) return res.status(404).json({ error: 'Booking not found.' })
+    const existingPayment = db.prepare('SELECT id FROM booking_payments WHERE provider_order_id = ?').get(orderId)
+    if (existingPayment) return res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(booking.id) })
     if (!booking.payment_order_id || booking.payment_order_id !== orderId) return res.status(400).json({ error: 'Payment order does not match this booking.' })
-    if (booking.payment_status === 'paid') return res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(booking.id) })
+    if (!booking.payment_order_amount || !booking.payment_order_kind) return res.status(400).json({ error: 'Payment order details are incomplete.' })
 
     let verified = false
     let verifiedPaymentId = paymentId
@@ -219,10 +236,24 @@ export function createApp(db) {
       return res.status(400).json({ error: 'Payment verification failed.' })
     }
 
-    db.prepare(`
-      UPDATE bookings SET status = 'confirmed', payment_status = 'paid', payment_id = ?,
-      paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    `).run(verifiedPaymentId, booking.id)
+    const newAmountPaid = booking.amount_paid + booking.payment_order_amount
+    const isFullyPaid = booking.amount != null && newAmountPaid >= booking.amount
+    const recordPayment = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO booking_payments (
+          id, booking_id, kind, provider, provider_order_id, provider_payment_id, amount
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `PAY-${randomUUID().slice(0, 12).toUpperCase()}`, booking.id, booking.payment_order_kind,
+        booking.payment_provider, orderId, verifiedPaymentId, booking.payment_order_amount,
+      )
+      db.prepare(`
+        UPDATE bookings SET status = 'confirmed', payment_status = ?, payment_id = ?,
+          amount_paid = ?, paid_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE paid_at END,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(isFullyPaid ? 'paid' : 'pending', verifiedPaymentId, newAmountPaid, isFullyPaid ? 1 : 0, booking.id)
+    })
+    recordPayment()
     res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(booking.id) })
   })
 
@@ -232,17 +263,17 @@ export function createApp(db) {
       SELECT
         COUNT(*) AS totalBookings,
         COALESCE(SUM(CASE WHEN event_date = ? THEN 1 ELSE 0 END), 0) AS todayBookings,
-        COALESCE(SUM(CASE WHEN payment_status = 'pending' THEN 1 ELSE 0 END), 0) AS pendingPayments,
-        COALESCE(SUM(CASE WHEN payment_status = 'pending' THEN amount ELSE 0 END), 0) AS pendingValue,
-        COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END), 0) AS totalRevenue
+        COALESCE(SUM(CASE WHEN status != 'cancelled' AND (amount IS NULL OR amount > amount_paid) THEN 1 ELSE 0 END), 0) AS pendingPayments,
+        COALESCE(SUM(CASE WHEN status != 'cancelled' AND amount IS NOT NULL AND amount > amount_paid THEN amount - amount_paid ELSE 0 END), 0) AS pendingValue
       FROM bookings
     `).get(today)
+    const totalRevenue = db.prepare('SELECT COALESCE(SUM(amount), 0) AS value FROM booking_payments').get().value
     const monthKey = today.slice(0, 7)
-    const thisMonthRevenue = db.prepare(`SELECT COALESCE(SUM(amount), 0) AS value FROM bookings WHERE payment_status = 'paid' AND substr(paid_at, 1, 7) = ?`).get(monthKey).value
+    const thisMonthRevenue = db.prepare(`SELECT COALESCE(SUM(amount), 0) AS value FROM booking_payments WHERE substr(paid_at, 1, 7) = ?`).get(monthKey).value
 
     const revenueRows = db.prepare(`
-      SELECT substr(paid_at, 1, 7) AS month, SUM(amount) AS revenue, COUNT(*) AS bookings
-      FROM bookings WHERE payment_status = 'paid' AND paid_at IS NOT NULL
+      SELECT substr(paid_at, 1, 7) AS month, SUM(amount) AS revenue, COUNT(DISTINCT booking_id) AS bookings
+      FROM booking_payments
       GROUP BY substr(paid_at, 1, 7) ORDER BY month
     `).all()
     const revenueMap = new Map(revenueRows.map((row) => [row.month, row]))
@@ -257,7 +288,7 @@ export function createApp(db) {
     }
 
     const upcomingBookings = db.prepare(`${bookingSelect} WHERE b.event_date >= ? AND b.status != 'cancelled' ORDER BY b.event_date, b.event_time LIMIT 8`).all(today)
-    res.json({ metrics: { ...totals, thisMonthRevenue }, monthlyRevenue, upcomingBookings, cities })
+    res.json({ metrics: { ...totals, totalRevenue, thisMonthRevenue }, monthlyRevenue, upcomingBookings, cities })
   })
 
   app.get('/api/admin/bookings', authRequired, requireAdmin, (req, res) => {
@@ -275,6 +306,47 @@ export function createApp(db) {
     const result = db.prepare('UPDATE bookings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id)
     if (!result.changes) return res.status(404).json({ error: 'Booking not found.' })
     res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(req.params.id) })
+  })
+
+  app.patch('/api/admin/bookings/:id/amount', authRequired, requireAdmin, (req, res) => {
+    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id)
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' })
+    const amount = Number(req.body.amount)
+    if (!Number.isInteger(amount) || amount < booking.amount_paid || amount > 10000000) {
+      return res.status(400).json({ error: 'The final total must be a whole-rupee amount that is not less than the amount already paid.' })
+    }
+    const isFullyPaid = amount === booking.amount_paid
+    db.prepare(`
+      UPDATE bookings SET amount = ?, payment_status = ?,
+        paid_at = CASE WHEN ? = 1 THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END,
+        updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(amount, isFullyPaid ? 'paid' : 'pending', isFullyPaid ? 1 : 0, booking.id)
+    res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(booking.id) })
+  })
+
+  app.post('/api/admin/bookings/:id/settle-balance', authRequired, requireAdmin, (req, res) => {
+    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id)
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' })
+    if (booking.status === 'cancelled') return res.status(409).json({ error: 'A cancelled booking cannot be settled.' })
+    if (booking.amount == null) return res.status(400).json({ error: 'Set the final booking total before collecting the balance.' })
+    const balance = booking.amount - booking.amount_paid
+    if (balance <= 0) return res.status(409).json({ error: 'This booking has no remaining balance.' })
+
+    const paymentId = `CASH-${randomUUID().slice(0, 12).toUpperCase()}`
+    const settleBalance = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO booking_payments (
+          id, booking_id, kind, provider, provider_payment_id, amount
+        ) VALUES (?, ?, 'balance', 'cash', ?, ?)
+      `).run(`PAY-${randomUUID().slice(0, 12).toUpperCase()}`, booking.id, paymentId, balance)
+      db.prepare(`
+        UPDATE bookings SET amount_paid = amount, status = 'confirmed', payment_status = 'paid',
+          payment_provider = 'cash', payment_id = ?, paid_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(paymentId, booking.id)
+    })
+    settleBalance()
+    res.json({ booking: db.prepare(`${bookingSelect} WHERE b.id = ?`).get(booking.id) })
   })
 
   app.patch('/api/admin/activities/:id', authRequired, requireAdmin, (req, res) => {

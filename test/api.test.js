@@ -42,7 +42,7 @@ test('same-day bookings are rejected', async () => {
   assert.match(response.body.error, /Same-day bookings/i)
 })
 
-test('customer can create and pay for a future booking', async () => {
+test('customer can pre-book a future event for ₹299', async () => {
   const future = new Date()
   future.setDate(future.getDate() + 10)
   const eventDate = future.toISOString().slice(0, 10)
@@ -52,21 +52,58 @@ test('customer can create and pay for a future booking', async () => {
   }).expect(201)
   bookingId = created.body.booking.id
   assert.equal(created.body.booking.city, 'Kota')
-  const order = await userAgent.post('/api/payments/create-order').send({ bookingId }).expect(200)
+  const order = await userAgent.post('/api/payments/create-order').send({ bookingId, paymentKind: 'deposit' }).expect(200)
   assert.equal(order.body.provider, 'development')
+  assert.equal(order.body.amount, 29900)
   orderId = order.body.orderId
-  const paid = await userAgent.post('/api/payments/verify').send({ bookingId, orderId }).expect(200)
-  assert.equal(paid.body.booking.paymentStatus, 'paid')
-  assert.equal(paid.body.booking.status, 'confirmed')
+  const prebooked = await userAgent.post('/api/payments/verify').send({ bookingId, orderId }).expect(200)
+  assert.equal(prebooked.body.booking.paymentStatus, 'pending')
+  assert.equal(prebooked.body.booking.status, 'confirmed')
+  assert.equal(prebooked.body.booking.amountPaid, 299)
+  assert.equal(prebooked.body.booking.balanceAmount, 4400)
 })
 
-test('admin access is protected and dashboard reports paid revenue', async () => {
+test('admin dashboard counts collected deposits as revenue', async () => {
   await userAgent.get('/api/admin/dashboard').expect(403)
   const login = await adminAgent.post('/api/auth/login').send({ email: config.adminEmail, password: config.adminPassword }).expect(200)
   assert.equal(login.body.user.role, 'admin')
   const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
-  assert.equal(dashboard.body.metrics.totalRevenue, 4699)
+  assert.equal(dashboard.body.metrics.totalRevenue, 299)
+  assert.equal(dashboard.body.metrics.pendingValue, 4400)
   assert.equal(dashboard.body.monthlyRevenue.length, 12)
+})
+
+test('customer can pay the remaining balance online later', async () => {
+  const order = await userAgent.post('/api/payments/create-order').send({ bookingId, paymentKind: 'balance' }).expect(200)
+  assert.equal(order.body.amount, 440000)
+  const paid = await userAgent.post('/api/payments/verify').send({ bookingId, orderId: order.body.orderId }).expect(200)
+  assert.equal(paid.body.booking.paymentStatus, 'paid')
+  assert.equal(paid.body.booking.amountPaid, 4699)
+  assert.equal(paid.body.booking.balanceAmount, 0)
+  const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
+  assert.equal(dashboard.body.metrics.totalRevenue, 4699)
+})
+
+test('admin can set a custom quote and collect its balance in cash', async () => {
+  const future = new Date()
+  future.setDate(future.getDate() + 14)
+  const created = await userAgent.post('/api/bookings').send({
+    activityId: 'perfume-making-stall', eventDate: future.toISOString().slice(0, 10), eventTime: '2:00 PM – 4:00 PM', guests: 25,
+    city: 'Jaipur', venueAddress: '789 Celebration Avenue, Jaipur', contactPhone: '+91 90000 11111',
+  }).expect(201)
+  const quoteBookingId = created.body.booking.id
+  const depositOrder = await userAgent.post('/api/payments/create-order').send({ bookingId: quoteBookingId, paymentKind: 'deposit' }).expect(200)
+  await userAgent.post('/api/payments/verify').send({ bookingId: quoteBookingId, orderId: depositOrder.body.orderId }).expect(200)
+
+  const priced = await adminAgent.patch(`/api/admin/bookings/${quoteBookingId}/amount`).send({ amount: 6000 }).expect(200)
+  assert.equal(priced.body.booking.balanceAmount, 5701)
+  const settled = await adminAgent.post(`/api/admin/bookings/${quoteBookingId}/settle-balance`).expect(200)
+  assert.equal(settled.body.booking.paymentStatus, 'paid')
+  assert.equal(settled.body.booking.amountPaid, 6000)
+  assert.equal(settled.body.booking.balanceAmount, 0)
+
+  const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
+  assert.equal(dashboard.body.metrics.totalRevenue, 10699)
 })
 
 test('admin can update an activity price in the database', async () => {

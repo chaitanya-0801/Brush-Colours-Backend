@@ -44,10 +44,14 @@ export function createDatabase(databasePath = config.databasePath) {
       venue_address TEXT NOT NULL,
       contact_phone TEXT NOT NULL,
       amount INTEGER,
+      deposit_amount INTEGER NOT NULL DEFAULT 299,
+      amount_paid INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL CHECK (status IN ('quote_requested', 'payment_pending', 'confirmed', 'cancelled')),
       payment_status TEXT NOT NULL CHECK (payment_status IN ('not_required', 'pending', 'paid', 'failed', 'refunded')),
       payment_provider TEXT,
       payment_order_id TEXT,
+      payment_order_amount INTEGER,
+      payment_order_kind TEXT,
       payment_id TEXT,
       paid_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +64,50 @@ export function createDatabase(databasePath = config.databasePath) {
     CREATE INDEX IF NOT EXISTS idx_bookings_event_date ON bookings(event_date);
     CREATE INDEX IF NOT EXISTS idx_bookings_paid_at ON bookings(paid_at);
   `)
+
+  const bookingColumns = new Set(db.pragma('table_info(bookings)').map((column) => column.name))
+  const bookingMigrations = [
+    ['deposit_amount', 'ALTER TABLE bookings ADD COLUMN deposit_amount INTEGER NOT NULL DEFAULT 299'],
+    ['amount_paid', 'ALTER TABLE bookings ADD COLUMN amount_paid INTEGER NOT NULL DEFAULT 0'],
+    ['payment_order_amount', 'ALTER TABLE bookings ADD COLUMN payment_order_amount INTEGER'],
+    ['payment_order_kind', 'ALTER TABLE bookings ADD COLUMN payment_order_kind TEXT'],
+  ]
+  for (const [column, statement] of bookingMigrations) {
+    if (!bookingColumns.has(column)) db.exec(statement)
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS booking_payments (
+      id TEXT PRIMARY KEY,
+      booking_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('deposit', 'balance', 'legacy')),
+      provider TEXT NOT NULL,
+      provider_order_id TEXT UNIQUE,
+      provider_payment_id TEXT,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      paid_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_booking_payments_booking ON booking_payments(booking_id);
+    CREATE INDEX IF NOT EXISTS idx_booking_payments_paid_at ON booking_payments(paid_at);
+  `)
+
+  db.prepare(`
+    UPDATE bookings
+    SET amount_paid = COALESCE(amount, 0)
+    WHERE payment_status = 'paid' AND amount_paid = 0
+  `).run()
+
+  db.prepare(`
+    INSERT OR IGNORE INTO booking_payments (
+      id, booking_id, kind, provider, provider_order_id, provider_payment_id, amount, paid_at
+    )
+    SELECT 'legacy-' || id, id, 'legacy', COALESCE(payment_provider, 'legacy'),
+      payment_order_id, payment_id, amount, COALESCE(paid_at, created_at)
+    FROM bookings
+    WHERE payment_status = 'paid' AND amount IS NOT NULL AND amount > 0
+  `).run()
 
   const insertActivity = db.prepare(`
     INSERT OR IGNORE INTO activities (id, title, category, price, price_unit, min_lead_days)

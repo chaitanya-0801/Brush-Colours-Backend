@@ -24,7 +24,15 @@ export const razorpayWebhook = asyncHandler(async (req, res) => {
   if (!verifyWebhookSignature(req.body, signature)) throw badRequest('Invalid webhook signature.', 'INVALID_WEBHOOK_SIGNATURE')
   const event = JSON.parse(req.body.toString('utf8'))
   const entity = event.payload?.payment?.entity
-  if (event.event === 'payment.captured' && entity?.order_id) await captureProviderPayment(entity.order_id, entity.id)
+  if (event.event === 'payment.captured' && entity?.order_id) {
+    await captureProviderPayment({
+      orderId: entity.order_id,
+      paymentId: entity.id,
+      amount: entity.amount,
+      currency: entity.currency,
+      eventId: req.get('x-razorpay-event-id'),
+    })
+  }
   if (event.event === 'payment.failed' && entity?.order_id) {
     await Payment.findOneAndUpdate({ providerOrderId: entity.order_id, status: 'created' }, { status: 'failed', failureReason: entity.error_description || 'Payment failed.' })
   }

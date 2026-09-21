@@ -11,6 +11,10 @@ const defaultSlots = [
 ]
 
 const cleanTextList = (items, max = 20) => Array.isArray(items) ? items.map((item) => String(item || '').trim()).filter(Boolean).slice(0, max) : []
+const numberInRange = (value, fallback, minimum, maximum) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback
+}
 
 function normalizeTimeSlots(items) {
   if (!Array.isArray(items) || !items.length) return defaultSlots
@@ -40,6 +44,9 @@ function normalizeActivity(input, existing = null) {
   }
   const imageUrl = String(input.imageUrl ?? input.image?.url ?? existing?.image?.url ?? '').trim()
   if (!/^https?:\/\//i.test(imageUrl)) throw badRequest('Add a valid activity image URL or upload an image.', 'INVALID_IMAGE')
+  const imagePositionX = numberInRange(input.imagePositionX ?? input.image?.positionX, existing?.image?.positionX ?? 50, 0, 100)
+  const imagePositionY = numberInRange(input.imagePositionY ?? input.image?.positionY, existing?.image?.positionY ?? 50, 0, 100)
+  const imageZoom = numberInRange(input.imageZoom ?? input.image?.zoom, existing?.image?.zoom ?? 1, 1, 2)
   const guestPricingInput = input.guestPricing || existing?.guestPricing || {}
   const maxGuests = Number(guestPricingInput.maxGuests ?? 1000)
   const includedGuests = Number(guestPricingInput.includedGuests ?? 1)
@@ -65,7 +72,13 @@ function normalizeActivity(input, existing = null) {
     reviews: Number(input.reviews ?? existing?.reviews ?? 0),
     badge: String(input.badge ?? existing?.badge ?? 'New').trim(),
     minLeadDays: Math.max(1, Number(input.minLeadDays ?? existing?.minLeadDays ?? 1)),
-    image: { url: imageUrl, publicId: String(input.imagePublicId ?? input.image?.publicId ?? existing?.image?.publicId ?? '').trim() },
+    image: {
+      url: imageUrl,
+      publicId: String(input.imagePublicId ?? input.image?.publicId ?? existing?.image?.publicId ?? '').trim(),
+      positionX: imagePositionX,
+      positionY: imagePositionY,
+      zoom: imageZoom,
+    },
     gallery: Array.isArray(input.gallery) ? input.gallery.slice(0, 8) : existing?.gallery || [],
     includes: cleanTextList(input.includes ?? existing?.includes, 30),
     timeSlots: normalizeTimeSlots(input.timeSlots ?? existing?.timeSlots),
@@ -94,6 +107,9 @@ export function activityView(activity) {
     minLeadDays: activity.minLeadDays,
     image: activity.image.url,
     imagePublicId: activity.image.publicId,
+    imagePositionX: activity.image.positionX ?? 50,
+    imagePositionY: activity.image.positionY ?? 50,
+    imageZoom: activity.image.zoom ?? 1,
     gallery: activity.gallery,
     includes: activity.includes,
     timeSlots: activity.timeSlots.filter((slot) => slot.active !== false),

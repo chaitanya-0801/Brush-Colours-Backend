@@ -5,7 +5,12 @@ import { env, paymentsConfigured } from '../../config/env.js'
 import { Booking } from '../bookings/booking.model.js'
 import { bookingView } from '../bookings/booking.view.js'
 import { Payment } from './payment.model.js'
-import { createProviderOrder, verifyCheckoutSignature } from './razorpay.gateway.js'
+import {
+  captureAuthorizedProviderPayment,
+  createProviderOrder,
+  fetchProviderPayment,
+  verifyCheckoutSignature,
+} from './razorpay.gateway.js'
 
 const depositTarget = (booking) => Math.min(booking.depositAmount, booking.amount ?? booking.depositAmount)
 
@@ -14,7 +19,8 @@ export async function createPaymentOrder(userId, bookingReference, requestedKind
   if (!booking) throw notFound('Booking not found.', 'BOOKING_NOT_FOUND')
   if (booking.status === 'cancelled') throw conflict('This booking has been cancelled.', 'BOOKING_CANCELLED')
   if (booking.status === 'completed') throw conflict('This event is already completed.', 'BOOKING_COMPLETED')
-  const kind = requestedKind === 'balance' ? 'balance' : 'deposit'
+  if (!['deposit', 'balance'].includes(requestedKind)) throw badRequest('Choose either a deposit or balance payment.', 'INVALID_PAYMENT_KIND')
+  const kind = requestedKind
   const deposit = depositTarget(booking)
   let amount
   if (kind === 'deposit') {
@@ -66,22 +72,55 @@ export async function verifyPayment({ userId, bookingReference, orderId, payment
   if (!payment) throw notFound('Payment order not found.', 'PAYMENT_ORDER_NOT_FOUND')
   if (payment.status === 'captured') return bookingView(await Booking.findById(payment.booking))
   if (payment.provider === 'razorpay' && !verifyCheckoutSignature(orderId, paymentId, signature)) {
-    payment.status = 'failed'
-    payment.failureReason = 'Checkout signature verification failed.'
-    await payment.save()
     throw badRequest('Payment verification failed.', 'PAYMENT_VERIFICATION_FAILED')
+  }
+  if (payment.provider === 'razorpay') {
+    if (!paymentId) throw badRequest('The payment id is required.', 'PAYMENT_ID_REQUIRED')
+    let providerPayment = await fetchProviderPayment(paymentId)
+    assertProviderPaymentMatches(payment, providerPayment)
+    if (providerPayment.status === 'authorized') {
+      try {
+        providerPayment = await captureAuthorizedProviderPayment(paymentId, payment.amount)
+      } catch (error) {
+        // Auto-capture can win this race. Re-fetch once before returning an error.
+        providerPayment = await fetchProviderPayment(paymentId)
+        if (providerPayment.status !== 'captured') throw error
+      }
+      assertProviderPaymentMatches(payment, providerPayment)
+    }
+    if (providerPayment.status !== 'captured') {
+      throw conflict('Payment is not captured yet. Please wait a moment and refresh your bookings.', 'PAYMENT_NOT_CAPTURED')
+    }
   }
   const verifiedPaymentId = payment.provider === 'development' ? (paymentId || `demo_pay_${new mongoose.Types.ObjectId()}`) : paymentId
   return capturePayment(payment, verifiedPaymentId)
 }
 
-export async function captureProviderPayment(orderId, paymentId) {
+export async function captureProviderPayment({ orderId, paymentId, amount, currency, eventId }) {
   const payment = await Payment.findOne({ providerOrderId: orderId })
-  if (!payment || payment.status === 'captured') return payment ? bookingView(await Booking.findById(payment.booking)) : null
-  return capturePayment(payment, paymentId)
+  if (!payment) return null
+  if (payment.provider !== 'razorpay') throw badRequest('Webhook order does not belong to Razorpay.', 'PAYMENT_PROVIDER_MISMATCH')
+  assertProviderPaymentMatches(payment, { id: paymentId, order_id: orderId, amount, currency, status: 'captured' })
+  if (eventId && payment.providerEventIds.includes(eventId)) return bookingView(await Booking.findById(payment.booking))
+  if (payment.status === 'captured') {
+    if (eventId) {
+      payment.providerEventIds.addToSet(eventId)
+      await payment.save()
+    }
+    return bookingView(await Booking.findById(payment.booking))
+  }
+  return capturePayment(payment, paymentId, eventId)
 }
 
-async function capturePayment(paymentDocument, providerPaymentId) {
+function assertProviderPaymentMatches(payment, providerPayment) {
+  const matches = providerPayment
+    && providerPayment.order_id === payment.providerOrderId
+    && providerPayment.amount === payment.amount * 100
+    && providerPayment.currency === 'INR'
+  if (!matches) throw badRequest('Payment details do not match this booking.', 'PAYMENT_DETAILS_MISMATCH')
+}
+
+async function capturePayment(paymentDocument, providerPaymentId, eventId) {
   const session = await mongoose.startSession()
   let output
   try {
@@ -95,6 +134,7 @@ async function capturePayment(paymentDocument, providerPaymentId) {
       if (!booking) throw notFound('Booking not found.', 'BOOKING_NOT_FOUND')
       payment.status = 'captured'
       payment.providerPaymentId = providerPaymentId
+      if (eventId) payment.providerEventIds.addToSet(eventId)
       payment.capturedAt = new Date()
       await payment.save({ session })
       booking.amountPaid += payment.amount

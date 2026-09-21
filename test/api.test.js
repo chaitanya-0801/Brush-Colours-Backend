@@ -106,6 +106,9 @@ test('admin can create an event with database-managed time slots and guest prici
     badge: 'New',
     minLeadDays: 2,
     imageUrl: 'https://images.unsplash.com/photo-1541961017774-22349e4a1262',
+    imagePositionX: 35,
+    imagePositionY: 65,
+    imageZoom: 1.2,
     includes: ['Paint supplies', 'Facilitator'],
     timeSlots: [
       { id: 'brunch', label: '10:30 AM - 12:30 PM', start: '10:30', end: '12:30' },
@@ -115,6 +118,9 @@ test('admin can create an event with database-managed time slots and guest prici
   }).expect(201)
   assert.equal(created.body.activity.timeSlots[0].id, 'brunch')
   assert.equal(created.body.activity.guestPricing.percentPerExtraGuest, 10)
+  assert.equal(created.body.activity.imagePositionX, 35)
+  assert.equal(created.body.activity.imagePositionY, 65)
+  assert.equal(created.body.activity.imageZoom, 1.2)
 
   const publicList = await request(app).get('/api/activities').expect(200)
   const activity = publicList.body.activities.find((item) => item.id === 'dynamic-paint-party')
@@ -168,6 +174,13 @@ test('customer pays the non-refundable Rs 299 deposit and can download a receipt
   const receipt = await userAgent.get(`/api/bookings/${bookingReference}/receipt`)
     .buffer(true).parse(binaryParser).expect(200).expect('Content-Type', /pdf/)
   assert.equal(receipt.body.subarray(0, 4).toString(), '%PDF')
+})
+
+test('payment order rejects an unknown payment kind', async () => {
+  const response = await userAgent.post('/api/payments/create-order').send({
+    bookingId: bookingReference, paymentKind: 'anything',
+  }).expect(400)
+  assert.equal(response.body.code, 'INVALID_PAYMENT_KIND')
 })
 
 test('admin can recalculate a booking after a guest increase using a percentage', async () => {

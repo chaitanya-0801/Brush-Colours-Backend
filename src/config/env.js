@@ -32,6 +32,10 @@ export function validateProductionEnv() {
   if (!process.env.MONGODB_URI) missing.push('MONGODB_URI')
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) missing.push('JWT_SECRET (minimum 32 characters)')
   if (!env.frontendOrigins.length) missing.push('FRONTEND_ORIGINS')
+  const anyRazorpayVariable = Boolean(env.razorpayKeyId || env.razorpayKeySecret || env.razorpayWebhookSecret)
+  if (anyRazorpayVariable && !env.razorpayKeyId) missing.push('RAZORPAY_KEY_ID')
+  if (anyRazorpayVariable && !env.razorpayKeySecret) missing.push('RAZORPAY_KEY_SECRET')
+  if (anyRazorpayVariable && !env.razorpayWebhookSecret) missing.push('RAZORPAY_WEBHOOK_SECRET')
   if (missing.length) throw new Error(`Missing production configuration: ${missing.join(', ')}`)
 }
 

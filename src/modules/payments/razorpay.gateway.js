@@ -4,11 +4,11 @@ import { env, paymentsConfigured } from '../../config/env.js'
 
 const authHeader = () => `Basic ${Buffer.from(`${env.razorpayKeyId}:${env.razorpayKeySecret}`).toString('base64')}`
 
-async function razorpayRequest(path, body) {
+async function razorpayRequest(path, { method = 'GET', body } = {}) {
   const response = await fetch(`https://api.razorpay.com/v1${path}`, {
-    method: 'POST',
+    method,
     headers: { Authorization: authHeader(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw new AppError(502, data.error?.description || 'The payment provider could not complete the request.', 'PAYMENT_PROVIDER_ERROR')
@@ -17,7 +17,23 @@ async function razorpayRequest(path, body) {
 
 export async function createProviderOrder({ amount, receipt, notes }) {
   if (!paymentsConfigured()) return null
-  return razorpayRequest('/orders', { amount: amount * 100, currency: 'INR', receipt, notes })
+  return razorpayRequest('/orders', {
+    method: 'POST',
+    body: { amount: amount * 100, currency: 'INR', receipt, notes },
+  })
+}
+
+export async function fetchProviderPayment(paymentId) {
+  if (!paymentsConfigured()) return null
+  return razorpayRequest(`/payments/${encodeURIComponent(paymentId)}`)
+}
+
+export async function captureAuthorizedProviderPayment(paymentId, amount) {
+  if (!paymentsConfigured()) return null
+  return razorpayRequest(`/payments/${encodeURIComponent(paymentId)}/capture`, {
+    method: 'POST',
+    body: { amount: amount * 100, currency: 'INR' },
+  })
 }
 
 export function verifyCheckoutSignature(orderId, paymentId, signature) {

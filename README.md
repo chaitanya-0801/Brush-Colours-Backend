@@ -50,11 +50,22 @@ The API is available at `http://localhost:4000/api`. `GET /api/health` returns 2
 | `ADMIN_PASSWORD` | Used only to create the admin when it does not exist |
 | `PREBOOK_AMOUNT=299` | Non-refundable reservation amount |
 
-For real payments add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. Configure Razorpay to send webhooks to `POST https://YOUR-API/api/payments/webhook/razorpay`.
+For real payments add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. All three are required together in production. Configure Razorpay to send webhooks to `POST https://YOUR-API/api/payments/webhook/razorpay` and subscribe to `payment.captured` and `payment.failed`.
 
 For admin photo uploads add `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`. Without them, an admin can still use an HTTPS image URL.
 
 Set `ALLOW_DEMO_PAYMENTS=false` in production. It exists only for local and automated testing.
+
+### Razorpay go-live checklist
+
+1. Complete Razorpay account activation/KYC and verify the settlement bank account.
+2. Keep Razorpay in Test Mode, generate Test API keys, and add them to Railway.
+3. Create a Test Mode webhook with the public Railway endpoint above. Use a new random webhook secret and put the same value in `RAZORPAY_WEBHOOK_SECRET` on Railway.
+4. In Razorpay payment capture settings, enable automatic capture. The API also safely captures an authorised payment during server verification and validates the order, amount, currency and final captured status with Razorpay.
+5. Set `ALLOW_DEMO_PAYMENTS=false`, redeploy, and complete a test payment from the website. Confirm the payment is captured in Razorpay and the booking receipt appears in the customer account.
+6. After Razorpay activates the account, switch the Dashboard to Live Mode, generate Live API keys, create the Live Mode webhook, replace all three Railway Razorpay variables, and redeploy.
+
+Never add API secrets or the webhook secret to the frontend, Vercel variables, source code, GitHub or screenshots. Only the backend receives them. The public Key ID is returned to Checkout by the backend when a payment order is created.
 
 ## Business rules implemented
 
@@ -66,6 +77,7 @@ Set `ALLOW_DEMO_PAYMENTS=false` in production. It exists only for local and auto
 - If a customer cancels, the ₹299 deposit is retained. Captured balance payments become a refund due; admin confirms them as processed after refunding through the payment provider or cash.
 - No external refund is triggered automatically. This prevents an accidental money transfer and provides a clear admin audit step.
 - Every paid booking exposes an authenticated PDF receipt download.
+- Checkout success is accepted only after server-side HMAC verification and a Razorpay API check confirms the matching order, INR amount and captured status. Signed webhooks provide the independent recovery path when a browser closes early.
 - Monthly revenue comes from the payment ledger and subtracts processed refunds.
 
 ## Main API routes

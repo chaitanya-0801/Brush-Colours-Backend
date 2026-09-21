@@ -11,6 +11,9 @@ const timeSlotSchema = new mongoose.Schema({
 const imageSchema = new mongoose.Schema({
   url: { type: String, required: true, trim: true },
   publicId: { type: String, trim: true },
+  positionX: { type: Number, min: 0, max: 100, default: 50 },
+  positionY: { type: Number, min: 0, max: 100, default: 50 },
+  zoom: { type: Number, min: 1, max: 2, default: 1 },
 }, { _id: false })
 
 const activitySchema = new mongoose.Schema({

@@ -11,6 +11,7 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 1 },
   providerOrderId: { type: String, sparse: true, unique: true, index: true },
   providerPaymentId: { type: String, sparse: true, unique: true, index: true },
+  providerEventIds: [{ type: String }],
   providerRefundIds: [{ type: String }],
   refundedAmount: { type: Number, min: 0, default: 0 },
   capturedAt: Date,

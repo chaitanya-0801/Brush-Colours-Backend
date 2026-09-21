@@ -10,10 +10,16 @@ export function uploadActivityImage(file) {
     const stream = cloudinary.uploader.upload_stream({
       folder: 'brush-colours/activities',
       resource_type: 'image',
-      transformation: [{ width: 1800, height: 1400, crop: 'limit', quality: 'auto', fetch_format: 'auto' }],
+      transformation: [{ width: 1800, height: 1400, crop: 'limit', quality: 'auto' }],
     }, (error, result) => {
-      if (error) reject(new AppError(502, 'The image could not be uploaded. Please try again.', 'IMAGE_UPLOAD_FAILED'))
-      else resolve({ url: result.secure_url, publicId: result.public_id, width: result.width, height: result.height })
+      if (error) {
+        console.error('Cloudinary activity image upload failed', {
+          message: error.message,
+          httpCode: error.http_code,
+          name: error.name,
+        })
+        reject(new AppError(502, 'The image could not be uploaded. Please verify the Cloudinary credentials and try again.', 'IMAGE_UPLOAD_FAILED'))
+      } else resolve({ url: result.secure_url, publicId: result.public_id, width: result.width, height: result.height })
     })
     stream.end(file.buffer)
   })

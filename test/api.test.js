@@ -58,6 +58,20 @@ test('health reports a MongoDB connection', async () => {
   assert.equal(response.body.database, 'mongodb-connected')
 })
 
+test('the requested wedding and birthday catalogues are seeded with package limits', async () => {
+  const response = await request(app).get('/api/activities').expect(200)
+  const wedding = response.body.activities.find((item) => item.id === 'wedding-block-printing')
+  const birthday = response.body.activities.find((item) => item.id === 'birthday-bracelet-making')
+  assert.equal(wedding.price, 12000)
+  assert.equal(wedding.priceUnit, 'for 50 people')
+  assert.equal(wedding.guestPricing.maxGuests, 50)
+  assert.equal(birthday.price, 10000)
+  assert.equal(birthday.priceUnit, 'for 15 kids')
+  assert.equal(birthday.guestPricing.maxGuests, 15)
+  assert.equal(response.body.activities.filter((item) => item.id.startsWith('wedding-')).length >= 27, true)
+  assert.equal(response.body.activities.filter((item) => item.id.startsWith('birthday-')).length >= 13, true)
+})
+
 test('customer registration and admin login use protected cookie sessions', async () => {
   const customer = await userAgent.post('/api/auth/register').send({
     name: 'Test Customer', email: 'customer@example.com', password: 'Customer@123',
@@ -213,4 +227,13 @@ test('dashboard revenue is calculated from captured MongoDB payments', async () 
   const response = await adminAgent.get('/api/admin/dashboard').expect(200)
   assert.equal(response.body.metrics.totalRevenue, 299)
   assert.equal(response.body.monthlyRevenue.length, 12)
+})
+
+test('admin can clear trial bookings and their payment records after explicit confirmation', async () => {
+  await adminAgent.delete('/api/admin/bookings').send({ confirmation: 'not confirmed' }).expect(400)
+  const cleared = await adminAgent.delete('/api/admin/bookings').send({ confirmation: 'DELETE ALL TRIAL BOOKINGS' }).expect(200)
+  assert.equal(cleared.body.deletedBookings, 1)
+  assert.equal(cleared.body.deletedPayments, 1)
+  const bookings = await adminAgent.get('/api/admin/bookings').expect(200)
+  assert.deepEqual(bookings.body.bookings, [])
 })

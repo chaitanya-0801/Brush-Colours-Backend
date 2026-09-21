@@ -9,26 +9,35 @@ const timeSlots = [
 ]
 
 export async function seedActivitiesIfEmpty() {
-  if (await Activity.exists({})) return
-  await Activity.insertMany(defaultActivities.map((item) => ({
-    slug: item.id,
-    category: item.category,
-    title: item.title,
-    short: item.short,
-    description: item.description,
-    price: item.price,
-    priceUnit: item.priceUnit,
-    duration: item.duration,
-    guestsLabel: item.guests,
-    locations: serviceCities,
-    rating: item.rating,
-    reviews: item.reviews,
-    badge: item.badge,
-    minLeadDays: item.minLeadDays,
-    image: { url: item.image },
-    includes: item.includes,
-    timeSlots,
-    guestPricing: { enabled: false, includedGuests: 1, percentPerExtraGuest: 0, maxGuests: 1000 },
-    active: true,
-  })), { ordered: false })
+  const operations = defaultActivities.map((item) => ({
+    updateOne: {
+      filter: { slug: item.id },
+      update: {
+        $setOnInsert: {
+          slug: item.id,
+          category: item.category,
+          title: item.title,
+          short: item.short,
+          description: item.description,
+          price: item.price,
+          priceUnit: item.priceUnit,
+          duration: item.duration,
+          guestsLabel: item.guests,
+          locations: serviceCities,
+          rating: item.rating,
+          reviews: item.reviews,
+          badge: item.badge,
+          minLeadDays: item.minLeadDays,
+          image: { url: item.image },
+          includes: item.includes,
+          timeSlots,
+          guestPricing: item.guestPricing || { enabled: false, includedGuests: 1, percentPerExtraGuest: 0, maxGuests: 1000 },
+          active: true,
+          deletedAt: null,
+        },
+      },
+      upsert: true,
+    },
+  }))
+  await Activity.bulkWrite(operations, { ordered: false })
 }

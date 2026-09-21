@@ -20,7 +20,7 @@ src/
 │   ├── payments/            # Payment ledger, Razorpay and refunds
 │   ├── admin/               # Dashboard, revenue and booking operations
 │   └── uploads/             # Cloudinary activity-photo uploads
-├── seed/                    # Initial activity catalogue (runs only on an empty DB)
+├── seed/                    # Activity catalogue (adds only missing events on startup)
 ├── app.js                   # HTTP middleware and route composition
 └── server.js                # Startup, seeding and graceful shutdown
 ```

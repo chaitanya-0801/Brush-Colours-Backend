@@ -1,3 +1,4 @@
+import mongoose from 'mongoose'
 import { badRequest, conflict, notFound } from '../../common/errors/AppError.js'
 import { indiaDateString } from '../../common/utils/dates.js'
 import { serviceCities } from '../../config/env.js'
@@ -71,6 +72,31 @@ export async function searchBookings(searchValue = '') {
     { reference: search }, { 'activitySnapshot.title': search }, { 'customer.name': search },
     { 'customer.email': search }, { city: search },
   ] }).sort({ createdAt: -1 }).limit(250).lean()).map(bookingView)
+}
+
+export async function clearTrialBookings(confirmation) {
+  if (confirmation !== 'DELETE ALL TRIAL BOOKINGS') {
+    throw badRequest('Type DELETE ALL TRIAL BOOKINGS to confirm this action.', 'BOOKING_DELETE_CONFIRMATION_REQUIRED')
+  }
+  const session = await mongoose.startSession()
+  let result = { deletedBookings: 0, deletedPayments: 0 }
+  try {
+    await session.withTransaction(async () => {
+      const bookings = await Booking.find({}, { _id: 1 }).session(session).lean()
+      const bookingIds = bookings.map((booking) => booking._id)
+      const paymentResult = bookingIds.length
+        ? await Payment.deleteMany({ booking: { $in: bookingIds } }, { session })
+        : { deletedCount: 0 }
+      const bookingResult = await Booking.deleteMany({}, { session })
+      result = {
+        deletedBookings: bookingResult.deletedCount || 0,
+        deletedPayments: paymentResult.deletedCount || 0,
+      }
+    })
+    return result
+  } finally {
+    await session.endSession()
+  }
 }
 
 const getBooking = async (reference) => {

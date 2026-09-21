@@ -3,24 +3,29 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Authentication, bookings, payments and admin reporting API for Brush&Colours.",
+  "description": "Production MongoDB API for Brush&Colours activities, bookings, payments, receipts and administration.",
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/app.js",
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
-    "better-sqlite3": "^12.4.1",
+    "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.1",
+    "multer": "^2.0.2",
+    "pdfkit": "^0.17.2"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^10.2.3",
     "supertest": "^7.1.4"
   }
 }

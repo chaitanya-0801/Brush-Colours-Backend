@@ -1,5 +1,11 @@
 node_modules/
 .npm-cache/
-data/
 .env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+.idea/
 npm-debug.log*

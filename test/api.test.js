@@ -1,114 +1,169 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
+import { MongoMemoryReplSet } from 'mongodb-memory-server'
 import request from 'supertest'
-import { createApp } from '../src/app.js'
-import { config } from '../src/config.js'
-import { createDatabase } from '../src/db.js'
 
-let db
+let replset
+let disconnectDatabase
 let app
 let userAgent
 let adminAgent
-let bookingId
-let orderId
+let bookingReference
 
-before(() => {
-  db = createDatabase(':memory:')
-  app = createApp(db)
+const futureDate = (days = 10) => {
+  const value = new Date()
+  value.setUTCDate(value.getUTCDate() + days)
+  return value.toISOString().slice(0, 10)
+}
+
+const binaryParser = (res, callback) => {
+  res.setEncoding('binary')
+  let data = ''
+  res.on('data', (chunk) => { data += chunk })
+  res.on('end', () => callback(null, Buffer.from(data, 'binary')))
+}
+
+before(async () => {
+  process.env.NODE_ENV = 'test'
+  process.env.JWT_SECRET = 'test-secret-that-is-long-enough-for-automated-tests'
+  process.env.ADMIN_NAME = 'Garima'
+  process.env.ADMIN_EMAIL = 'admin@example.com'
+  process.env.ADMIN_PASSWORD = 'AdminPass@123'
+  process.env.ALLOW_DEMO_PAYMENTS = 'true'
+  const binary = process.env.MONGOMS_SYSTEM_BINARY ? { systemBinary: process.env.MONGOMS_SYSTEM_BINARY } : undefined
+  replset = await MongoMemoryReplSet.create({ binary, replSet: { count: 1, storageEngine: 'wiredTiger' } })
+  process.env.MONGODB_URI = replset.getUri('brush-colours-test')
+
+  const database = await import('../src/config/database.js')
+  const auth = await import('../src/modules/auth/auth.service.js')
+  const seed = await import('../src/seed/seed.service.js')
+  const application = await import('../src/app.js')
+  disconnectDatabase = database.disconnectDatabase
+  await database.connectDatabase(process.env.MONGODB_URI)
+  await seed.seedActivitiesIfEmpty()
+  await auth.ensureAdmin()
+  app = application.createApp()
   userAgent = request.agent(app)
   adminAgent = request.agent(app)
 })
 
-after(() => db.close())
+after(async () => {
+  if (disconnectDatabase) await disconnectDatabase()
+  if (replset) await replset.stop()
+})
 
-test('health endpoint responds', async () => {
+test('health reports a MongoDB connection', async () => {
   const response = await request(app).get('/api/health').expect(200)
   assert.equal(response.body.ok, true)
+  assert.equal(response.body.database, 'mongodb-connected')
 })
 
-test('a customer can register and keep an authenticated session', async () => {
-  const response = await userAgent.post('/api/auth/register').send({ name: 'Test Customer', email: 'customer@example.com', password: 'Customer@123' }).expect(201)
-  assert.equal(response.body.user.role, 'user')
-  const session = await userAgent.get('/api/auth/me').expect(200)
-  assert.equal(session.body.user.email, 'customer@example.com')
-})
-
-test('same-day bookings are rejected', async () => {
-  const today = new Date().toISOString().slice(0, 10)
-  const response = await userAgent.post('/api/bookings').send({
-    activityId: 'pottery-party', eventDate: today, eventTime: '11:00 AM – 1:00 PM', guests: 6,
-    city: 'Delhi', venueAddress: '123 Test Venue, Delhi', contactPhone: '+91 98765 43210',
-  }).expect(400)
-  assert.match(response.body.error, /Same-day bookings/i)
-})
-
-test('customer can pre-book a future event for ₹299', async () => {
-  const future = new Date()
-  future.setDate(future.getDate() + 10)
-  const eventDate = future.toISOString().slice(0, 10)
-  const created = await userAgent.post('/api/bookings').send({
-    activityId: 'pottery-party', eventDate, eventTime: '11:00 AM – 1:00 PM', guests: 6,
-    city: 'Kota', venueAddress: '456 Creative Street, Kota', contactPhone: '+91 98765 43210',
+test('customer registration and admin login use protected cookie sessions', async () => {
+  const customer = await userAgent.post('/api/auth/register').send({
+    name: 'Test Customer', email: 'customer@example.com', password: 'Customer@123',
   }).expect(201)
-  bookingId = created.body.booking.id
-  assert.equal(created.body.booking.city, 'Kota')
-  const order = await userAgent.post('/api/payments/create-order').send({ bookingId, paymentKind: 'deposit' }).expect(200)
-  assert.equal(order.body.provider, 'development')
+  assert.equal(customer.body.user.role, 'user')
+  const admin = await adminAgent.post('/api/auth/login').send({
+    email: 'admin@example.com', password: 'AdminPass@123',
+  }).expect(200)
+  assert.equal(admin.body.user.role, 'admin')
+})
+
+test('admin can create an event with database-managed time slots and guest pricing', async () => {
+  const created = await adminAgent.post('/api/admin/activities').send({
+    title: 'Dynamic Paint Party',
+    category: 'birthday',
+    short: 'A colourful test event.',
+    description: 'A complete painting party with materials and a facilitator.',
+    price: 1000,
+    priceUnit: 'per event',
+    duration: '2 hrs',
+    guestsLabel: '5-30 guests',
+    locations: ['Delhi', 'Jaipur'],
+    badge: 'New',
+    minLeadDays: 2,
+    imageUrl: 'https://images.unsplash.com/photo-1541961017774-22349e4a1262',
+    includes: ['Paint supplies', 'Facilitator'],
+    timeSlots: [
+      { id: 'brunch', label: '10:30 AM - 12:30 PM', start: '10:30', end: '12:30' },
+      { id: 'sunset', label: '4:30 PM - 6:30 PM', start: '16:30', end: '18:30' },
+    ],
+    guestPricing: { enabled: true, includedGuests: 5, percentPerExtraGuest: 10, maxGuests: 30 },
+  }).expect(201)
+  assert.equal(created.body.activity.timeSlots[0].id, 'brunch')
+  assert.equal(created.body.activity.guestPricing.percentPerExtraGuest, 10)
+
+  const publicList = await request(app).get('/api/activities').expect(200)
+  const activity = publicList.body.activities.find((item) => item.id === 'dynamic-paint-party')
+  assert.equal(activity.timeSlots.length, 2)
+  assert.equal(activity.description.includes('painting party'), true)
+})
+
+test('admin accounts are forbidden from booking events', async () => {
+  await adminAgent.post('/api/bookings').send({
+    activityId: 'dynamic-paint-party', eventDate: futureDate(), timeSlotId: 'brunch',
+    guests: 7, city: 'Delhi', venueAddress: '123 Creative Street, Delhi', contactPhone: '+91 98765 43210',
+  }).expect(403)
+})
+
+test('customer booking uses the selected dynamic slot and percentage guest price', async () => {
+  const created = await userAgent.post('/api/bookings').send({
+    activityId: 'dynamic-paint-party', eventDate: futureDate(), timeSlotId: 'sunset',
+    guests: 7, city: 'Delhi', venueAddress: '123 Creative Street, Delhi', contactPhone: '+91 98765 43210',
+  }).expect(201)
+  bookingReference = created.body.booking.id
+  assert.equal(created.body.booking.eventTime, '4:30 PM - 6:30 PM')
+  assert.equal(created.body.booking.baseAmount, 1000)
+  assert.equal(created.body.booking.guestAdjustment.extraGuests, 2)
+  assert.equal(created.body.booking.guestAdjustment.amount, 200)
+  assert.equal(created.body.booking.amount, 1200)
+})
+
+test('customer pays the non-refundable Rs 299 deposit and can download a receipt', async () => {
+  const order = await userAgent.post('/api/payments/create-order').send({
+    bookingId: bookingReference, paymentKind: 'deposit',
+  }).expect(200)
   assert.equal(order.body.amount, 29900)
-  orderId = order.body.orderId
-  const prebooked = await userAgent.post('/api/payments/verify').send({ bookingId, orderId }).expect(200)
-  assert.equal(prebooked.body.booking.paymentStatus, 'pending')
-  assert.equal(prebooked.body.booking.status, 'confirmed')
-  assert.equal(prebooked.body.booking.amountPaid, 299)
-  assert.equal(prebooked.body.booking.balanceAmount, 4400)
+  const paid = await userAgent.post('/api/payments/verify').send({
+    bookingId: bookingReference, orderId: order.body.orderId,
+  }).expect(200)
+  assert.equal(paid.body.booking.amountPaid, 299)
+  assert.equal(paid.body.booking.balanceAmount, 901)
+  assert.equal(paid.body.booking.receiptUrl.endsWith('/receipt'), true)
+
+  const receipt = await userAgent.get(`/api/bookings/${bookingReference}/receipt`)
+    .buffer(true).parse(binaryParser).expect(200).expect('Content-Type', /pdf/)
+  assert.equal(receipt.body.subarray(0, 4).toString(), '%PDF')
 })
 
-test('admin dashboard counts collected deposits as revenue', async () => {
-  await userAgent.get('/api/admin/dashboard').expect(403)
-  const login = await adminAgent.post('/api/auth/login').send({ email: config.adminEmail, password: config.adminPassword }).expect(200)
-  assert.equal(login.body.user.role, 'admin')
-  const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
-  assert.equal(dashboard.body.metrics.totalRevenue, 299)
-  assert.equal(dashboard.body.metrics.pendingValue, 4400)
-  assert.equal(dashboard.body.monthlyRevenue.length, 12)
+test('admin can recalculate a booking after a guest increase using a percentage', async () => {
+  const updated = await adminAgent.patch(`/api/admin/bookings/${bookingReference}/guests`).send({
+    guests: 8, percentage: 5, reason: 'Customer added one more guest',
+  }).expect(200)
+  assert.equal(updated.body.booking.guests, 8)
+  assert.equal(updated.body.booking.guestAdjustment.extraGuests, 3)
+  assert.equal(updated.body.booking.guestAdjustment.amount, 150)
+  assert.equal(updated.body.booking.amount, 1150)
 })
 
-test('customer can pay the remaining balance online later', async () => {
-  const order = await userAgent.post('/api/payments/create-order').send({ bookingId, paymentKind: 'balance' }).expect(200)
-  assert.equal(order.body.amount, 440000)
-  const paid = await userAgent.post('/api/payments/verify').send({ bookingId, orderId: order.body.orderId }).expect(200)
-  assert.equal(paid.body.booking.paymentStatus, 'paid')
-  assert.equal(paid.body.booking.amountPaid, 4699)
-  assert.equal(paid.body.booking.balanceAmount, 0)
-  const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
-  assert.equal(dashboard.body.metrics.totalRevenue, 4699)
+test('customer cancellation retains Rs 299 and does not perform an automatic refund', async () => {
+  const cancelled = await userAgent.post(`/api/bookings/${bookingReference}/cancel`).send({
+    reason: 'Plans changed',
+  }).expect(200)
+  assert.equal(cancelled.body.booking.status, 'cancelled')
+  assert.equal(cancelled.body.booking.cancellation.depositRetained, 299)
+  assert.equal(cancelled.body.booking.cancellation.refundStatus, 'not_applicable')
+  assert.equal(cancelled.body.booking.amountPaid, 299)
 })
 
-test('admin can set a custom quote and collect its balance in cash', async () => {
-  const future = new Date()
-  future.setDate(future.getDate() + 14)
-  const created = await userAgent.post('/api/bookings').send({
-    activityId: 'perfume-making-stall', eventDate: future.toISOString().slice(0, 10), eventTime: '2:00 PM – 4:00 PM', guests: 25,
-    city: 'Jaipur', venueAddress: '789 Celebration Avenue, Jaipur', contactPhone: '+91 90000 11111',
-  }).expect(201)
-  const quoteBookingId = created.body.booking.id
-  const depositOrder = await userAgent.post('/api/payments/create-order').send({ bookingId: quoteBookingId, paymentKind: 'deposit' }).expect(200)
-  await userAgent.post('/api/payments/verify').send({ bookingId: quoteBookingId, orderId: depositOrder.body.orderId }).expect(200)
-
-  const priced = await adminAgent.patch(`/api/admin/bookings/${quoteBookingId}/amount`).send({ amount: 6000 }).expect(200)
-  assert.equal(priced.body.booking.balanceAmount, 5701)
-  const settled = await adminAgent.post(`/api/admin/bookings/${quoteBookingId}/settle-balance`).expect(200)
-  assert.equal(settled.body.booking.paymentStatus, 'paid')
-  assert.equal(settled.body.booking.amountPaid, 6000)
-  assert.equal(settled.body.booking.balanceAmount, 0)
-
-  const dashboard = await adminAgent.get('/api/admin/dashboard').expect(200)
-  assert.equal(dashboard.body.metrics.totalRevenue, 10699)
+test('admin can archive an event so it disappears from the customer catalogue', async () => {
+  await adminAgent.delete('/api/admin/activities/dynamic-paint-party').expect(200)
+  const publicList = await request(app).get('/api/activities').expect(200)
+  assert.equal(publicList.body.activities.some((item) => item.id === 'dynamic-paint-party'), false)
 })
 
-test('admin can update an activity price in the database', async () => {
-  const updated = await adminAgent.patch('/api/admin/activities/perfume-making-stall').send({ price: 5999 }).expect(200)
-  assert.equal(updated.body.activity.price, 5999)
-  const activities = await request(app).get('/api/activities').expect(200)
-  assert.equal(activities.body.activities.find((activity) => activity.id === 'perfume-making-stall').price, 5999)
+test('dashboard revenue is calculated from captured MongoDB payments', async () => {
+  const response = await adminAgent.get('/api/admin/dashboard').expect(200)
+  assert.equal(response.body.metrics.totalRevenue, 299)
+  assert.equal(response.body.monthlyRevenue.length, 12)
 })

@@ -3,7 +3,7 @@ import { env } from '../../config/env.js'
 import { forbidden, unauthorized } from '../../common/errors/AppError.js'
 import { asyncHandler } from '../../common/middleware/asyncHandler.js'
 import { User } from './user.model.js'
-import { cookieName } from './auth.service.js'
+import { cookieName, publicUser } from './auth.service.js'
 
 export const authenticate = asyncHandler(async (req, _res, next) => {
   const token = req.cookies?.[cookieName]
@@ -19,11 +19,9 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
   if (user.passwordChangedAt && Number(payload.iat) * 1000 < user.passwordChangedAt.getTime()) {
     throw unauthorized('Your password changed. Please sign in again.')
   }
-  req.user = publicAuthUser(user)
+  req.user = publicUser(user)
   next()
 })
-
-const publicAuthUser = (user) => ({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, createdAt: user.createdAt })
 
 export const requireAdmin = (req, _res, next) => {
   if (req.user?.role !== 'admin') return next(forbidden('Administrator access required.'))

@@ -8,7 +8,12 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 export const cookieName = 'bc_session'
 
 export const publicUser = (user) => ({
-  id: user._id.toString(), name: user.name, email: user.email, role: user.role, createdAt: user.createdAt,
+  id: user._id.toString(),
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  favoriteActivityIds: user.favoriteActivityIds || [],
+  createdAt: user.createdAt,
 })
 
 export async function registerUser(input) {

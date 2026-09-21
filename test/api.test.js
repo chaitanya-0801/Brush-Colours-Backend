@@ -119,6 +119,17 @@ test('customer booking uses the selected dynamic slot and percentage guest price
   assert.equal(created.body.booking.amount, 1200)
 })
 
+test('customer favourites are stored on the MongoDB user account', async () => {
+  const saved = await userAgent.post('/api/favorites/dynamic-paint-party').expect(200)
+  assert.deepEqual(saved.body.user.favoriteActivityIds, ['dynamic-paint-party'])
+
+  const profile = await userAgent.get('/api/auth/me').expect(200)
+  assert.deepEqual(profile.body.user.favoriteActivityIds, ['dynamic-paint-party'])
+
+  const removed = await userAgent.delete('/api/favorites/dynamic-paint-party').expect(200)
+  assert.deepEqual(removed.body.user.favoriteActivityIds, [])
+})
+
 test('customer pays the non-refundable Rs 299 deposit and can download a receipt', async () => {
   const order = await userAgent.post('/api/payments/create-order').send({
     bookingId: bookingReference, paymentKind: 'deposit',

@@ -11,6 +11,7 @@ import { adminRouter } from './modules/admin/admin.routes.js'
 import { activityRouter, adminActivityRouter } from './modules/activities/activity.routes.js'
 import { authRouter } from './modules/auth/auth.routes.js'
 import { bookingRouter } from './modules/bookings/booking.routes.js'
+import { favoriteRouter } from './modules/favorites/favorite.routes.js'
 import { razorpayWebhook } from './modules/payments/payment.controller.js'
 import { paymentRouter } from './modules/payments/payment.routes.js'
 import { uploadRouter } from './modules/uploads/upload.routes.js'
@@ -63,6 +64,7 @@ export function createApp() {
   app.use('/api/auth', authRouter)
   app.use('/api/activities', activityRouter)
   app.use('/api/bookings', bookingRouter)
+  app.use('/api/favorites', favoriteRouter)
   app.use('/api/payments', paymentRouter)
   app.use('/api/admin', adminRouter)
   app.use('/api/admin/activities', adminActivityRouter)

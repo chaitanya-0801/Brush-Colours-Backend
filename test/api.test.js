@@ -69,6 +69,29 @@ test('customer registration and admin login use protected cookie sessions', asyn
   assert.equal(admin.body.user.role, 'admin')
 })
 
+test('group event enquiries are stored and available to the admin', async () => {
+  const created = await request(app).post('/api/group-inquiries').send({
+    fullName: 'Group Organiser',
+    eventType: 'Corporate event',
+    organizationName: 'Creative Company',
+    whatsappNumber: '+91 98765 43210',
+    email: 'groups@example.com',
+    eventDate: futureDate(20),
+    city: 'Jaipur',
+    participants: 35,
+    activityPreference: 'Pottery workshop',
+    details: 'A relaxed creative workshop for our annual team gathering.',
+  }).expect(201)
+  assert.match(created.body.inquiry.reference, /^GROUP-/)
+
+  const listed = await adminAgent.get('/api/admin/group-inquiries').expect(200)
+  const inquiry = listed.body.inquiries.find((item) => item.reference === created.body.inquiry.reference)
+  assert.equal(inquiry.city, 'Jaipur')
+
+  const updated = await adminAgent.patch(`/api/admin/group-inquiries/${inquiry.id}/status`).send({ status: 'contacted' }).expect(200)
+  assert.equal(updated.body.inquiry.status, 'contacted')
+})
+
 test('admin can create an event with database-managed time slots and guest pricing', async () => {
   const created = await adminAgent.post('/api/admin/activities').send({
     title: 'Dynamic Paint Party',

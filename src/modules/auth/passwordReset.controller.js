@@ -9,62 +9,66 @@ import { sendMail } from "../../config/nodemail.js";
 
 const resetPasswordToken = async (req, res) => {
   try {
-    const { email } = req.body;
-    // console.log(email);
+    const email = String(req.body.email || "").trim().toLowerCase();
+
     if (!email) {
-      return res.status(401).json({
+      return res.status(400).json({
         success: false,
-        message: "Please Enter Email",
+        message: "Please enter email",
       });
     }
-    //existing user check
+
     const user = await User.findOne({ email });
+
     if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: "User Not Found,Please register",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "User not found, please register",
+      });
     }
-    // console.log(user);
-    //token create
+
     const randomToken = randomstring.generate(24);
-    console.log("token",randomToken);
-    const saveToken = await passwordTokenModel.findOneAndUpdate(
+
+    console.log("Reset token generated for:", email);
+
+    await passwordTokenModel.findOneAndUpdate(
       { userId: user._id },
       { token: randomToken },
       {
         new: true,
         upsert: true,
         runValidators: true,
-      },
+      }
     );
-    // const resetLink = `${process.env.FRONTEND_URL}/forgotpassword?token=${randomToken}`;
-    const resetLink = `${process.env.FRONTEND_URL}/forgotpassword/${randomToken}`;
-    //send email
-    try {
-        const emailBody = PasswordReset(email, resetLink,process.env.FRONTEND_URL);
-     const mail = await sendMail({
-  to:email, 
-  subject: "Password Reset Link-Brush and Colours", 
-  html:emailBody
-});
 
-        return res.status(201).json({
-        message: "Reset Link sent",
-        mail,
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: "Unable to send the Link on email",
-        log: error.message,
-      });
-    }
-  } catch (err) {
-    res.status(500).json({
+    const resetLink =
+      `${process.env.FRONTEND_URL}/forgotpassword/${randomToken}`;
+
+    console.log("Reset link:", resetLink);
+
+    const emailBody = PasswordReset(
+      email,
+      resetLink,
+      process.env.FRONTEND_URL
+    );
+
+    await sendMail({
+      to: email,
+      subject: "Password Reset Link - Brush and Colours",
+      html: emailBody,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Reset link sent",
+    });
+
+  } catch (error) {
+    console.error("RESET PASSWORD ERROR:", error);
+
+    return res.status(500).json({
       success: false,
-      message: err.message || "Unable to send the Reset Link",
-      error: err.message,
+      message: "Unable to send the reset link",
     });
   }
 };

@@ -44,6 +44,10 @@ export function createReceiptPdf(booking) {
     red: '#B95757',
   }
 
+  // --------------------------------------------------
+  // PAGE CONSTANTS
+  // --------------------------------------------------
+
   const left = 45
   const right = 550
   const width = right - left
@@ -120,7 +124,7 @@ export function createReceiptPdf(booking) {
     .font('Helvetica-Bold')
     .fontSize(19)
     .text(view.activityTitle || 'Event Booking', left, 130, {
-      width: width,
+      width,
     })
 
   document
@@ -129,7 +133,10 @@ export function createReceiptPdf(booking) {
     .fontSize(9)
     .text(`Booking Reference  •  ${view.id}`, left, 157)
 
-  // Status badge
+  // --------------------------------------------------
+  // STATUS BADGE
+  // --------------------------------------------------
+
   const statusText = view.paymentStatus
     ? view.paymentStatus.replaceAll('_', ' ').toUpperCase()
     : 'PENDING'
@@ -151,7 +158,13 @@ export function createReceiptPdf(booking) {
   }
 
   document
-    .roundedRect(right - statusWidth, 128, statusWidth, 27, 13)
+    .roundedRect(
+      right - statusWidth,
+      128,
+      statusWidth,
+      27,
+      13
+    )
     .fill(statusColor)
 
   document
@@ -177,14 +190,21 @@ export function createReceiptPdf(booking) {
 
   y += 22
 
+  // Reduced height from 142 -> 125
   document
-    .roundedRect(left, y, width, 142, 10)
+    .roundedRect(left, y, width, 125, 10)
     .fill(colors.cream)
 
   const detailLeft = left + 18
   const detailRight = left + 270
 
-  const drawDetail = (label, value, x, currentY, valueWidth = 210) => {
+  const drawDetail = (
+    label,
+    value,
+    x,
+    currentY,
+    valueWidth = 210
+  ) => {
     document
       .fillColor(colors.muted)
       .font('Helvetica')
@@ -219,33 +239,37 @@ export function createReceiptPdf(booking) {
     'Event Date',
     view.eventDate,
     detailLeft,
-    y + 58
+    y + 55
   )
 
   drawDetail(
     'Event Time',
     view.eventTime,
     detailRight,
-    y + 58
+    y + 55
   )
 
   drawDetail(
     'Guests',
     String(view.guests ?? '-'),
     detailLeft,
-    y + 98
+    y + 92
   )
 
   drawDetail(
     'City',
     view.city,
     detailRight,
-    y + 98
+    y + 92
   )
 
-  y += 165
+  // Reduced from 165 -> 148
+  y += 148
 
-  // Venue
+  // --------------------------------------------------
+  // VENUE
+  // --------------------------------------------------
+
   document
     .fillColor(colors.muted)
     .font('Helvetica')
@@ -261,7 +285,7 @@ export function createReceiptPdf(booking) {
       left,
       y + 13,
       {
-        width: width,
+        width,
       }
     )
 
@@ -282,10 +306,18 @@ export function createReceiptPdf(booking) {
   const rows = [
     [
       'Total Booking Amount',
-      view.amount == null ? 'Final quote pending' : money(view.amount),
+      view.amount == null
+        ? 'Final quote pending'
+        : money(view.amount),
     ],
-    ['Pre-booking Amount', money(view.depositAmount)],
-    ['Amount Received', money(view.amountPaid)],
+    [
+      'Pre-booking Amount',
+      money(view.depositAmount),
+    ],
+    [
+      'Amount Received',
+      money(view.amountPaid),
+    ],
     [
       'Balance Due',
       view.balanceAmount == null
@@ -294,17 +326,30 @@ export function createReceiptPdf(booking) {
     ],
   ]
 
-  const rowHeight = 31
+  // Reduced from 31 -> 28
+  const rowHeight = 28
   const tableHeight = rows.length * rowHeight
 
   // Table background
   document
-    .roundedRect(left, y, width, tableHeight, 8)
+    .roundedRect(
+      left,
+      y,
+      width,
+      tableHeight,
+      8
+    )
     .fill(colors.white)
 
   // Border
   document
-    .roundedRect(left, y, width, tableHeight, 8)
+    .roundedRect(
+      left,
+      y,
+      width,
+      tableHeight,
+      8
+    )
     .strokeColor(colors.border)
     .lineWidth(1)
     .stroke()
@@ -314,7 +359,12 @@ export function createReceiptPdf(booking) {
 
     if (index % 2 === 0) {
       document
-        .rect(left + 1, rowY + 1, width - 2, rowHeight - 1)
+        .rect(
+          left + 1,
+          rowY + 1,
+          width - 2,
+          rowHeight - 1
+        )
         .fill(colors.cream)
     }
 
@@ -322,7 +372,11 @@ export function createReceiptPdf(booking) {
       .fillColor(colors.text)
       .font('Helvetica')
       .fontSize(9.5)
-      .text(label, left + 15, rowY + 10)
+      .text(
+        label,
+        left + 15,
+        rowY + 9
+      )
 
     document
       .fillColor(
@@ -330,19 +384,20 @@ export function createReceiptPdf(booking) {
           ? colors.orangeDark
           : colors.dark
       )
-      .font(
-        label === 'Balance Due'
-          ? 'Helvetica-Bold'
-          : 'Helvetica-Bold'
-      )
+      .font('Helvetica-Bold')
       .fontSize(9.5)
-      .text(value, left + 285, rowY + 10, {
-        width: width - 300,
-        align: 'right',
-      })
+      .text(
+        value,
+        left + 285,
+        rowY + 9,
+        {
+          width: width - 300,
+          align: 'right',
+        }
+      )
   })
 
-  y += tableHeight + 18
+  y += tableHeight + 16
 
   // --------------------------------------------------
   // BALANCE HIGHLIGHT
@@ -350,31 +405,51 @@ export function createReceiptPdf(booking) {
 
   if (view.balanceAmount != null) {
     document
-      .roundedRect(left, y, width, 54, 9)
+      .roundedRect(
+        left,
+        y,
+        width,
+        50,
+        9
+      )
       .fill(colors.orange)
 
     document
       .fillColor(colors.white)
       .font('Helvetica')
       .fontSize(9)
-      .text('BALANCE DUE', left + 18, y + 12)
+      .text(
+        'BALANCE DUE',
+        left + 18,
+        y + 10
+      )
 
     document
       .fillColor(colors.white)
       .font('Helvetica-Bold')
-      .fontSize(17)
-      .text(money(view.balanceAmount), left + 18, y + 27)
+      .fontSize(16)
+      .text(
+        money(view.balanceAmount),
+        left + 18,
+        y + 25
+      )
 
     document
       .fillColor('#FFF4EE')
       .font('Helvetica')
       .fontSize(8)
-      .text('Please settle the remaining amount as agreed.', left + 250, y + 20, {
-        width: 225,
-        align: 'right',
-      })
+      .text(
+        'Please settle the remaining amount as agreed.',
+        left + 250,
+        y + 18,
+        {
+          width: 225,
+          align: 'right',
+        }
+      )
 
-    y += 72
+    // Reduced from 72 -> 65
+    y += 65
   }
 
   // --------------------------------------------------
@@ -385,9 +460,13 @@ export function createReceiptPdf(booking) {
     .fillColor(colors.orangeDark)
     .font('Helvetica-Bold')
     .fontSize(10)
-    .text('CANCELLATION POLICY', left, y)
+    .text(
+      'CANCELLATION POLICY',
+      left,
+      y
+    )
 
-  y += 17
+  y += 15
 
   const policyText =
     `The ${money(view.depositAmount)} pre-booking amount is non-refundable if the booking is cancelled. ` +
@@ -397,12 +476,17 @@ export function createReceiptPdf(booking) {
     .fillColor(colors.muted)
     .font('Helvetica')
     .fontSize(8.5)
-    .text(policyText, left, y, {
-      width: width,
-      lineGap: 3,
-    })
+    .text(
+      policyText,
+      left,
+      y,
+      {
+        width,
+        lineGap: 2,
+      }
+    )
 
-  y += 43
+  y += 38
 
   // --------------------------------------------------
   // CANCELLED NOTICE
@@ -410,14 +494,24 @@ export function createReceiptPdf(booking) {
 
   if (view.status === 'cancelled') {
     document
-      .roundedRect(left, y, width, 42, 7)
+      .roundedRect(
+        left,
+        y,
+        width,
+        42,
+        7
+      )
       .fill('#FDF0EE')
 
     document
       .fillColor(colors.red)
       .font('Helvetica-Bold')
       .fontSize(9)
-      .text('BOOKING CANCELLED', left + 14, y + 9)
+      .text(
+        'BOOKING CANCELLED',
+        left + 14,
+        y + 9
+      )
 
     document
       .fillColor('#754646')
@@ -431,14 +525,16 @@ export function createReceiptPdf(booking) {
         y + 23
       )
 
-    y += 58
+    y += 55
   }
 
   // --------------------------------------------------
   // FOOTER
   // --------------------------------------------------
 
-  const footerY = 775
+  // IMPORTANT:
+  // Keep footer inside the A4 content area.
+  const footerY = 750
 
   document
     .strokeColor(colors.border)
@@ -451,7 +547,11 @@ export function createReceiptPdf(booking) {
     .fillColor(colors.dark)
     .font('Helvetica-Bold')
     .fontSize(9)
-    .text('BRUSH & COLOURS', left, footerY + 13)
+    .text(
+      'BRUSH & COLOURS',
+      left,
+      footerY + 10
+    )
 
   document
     .fillColor(colors.muted)
@@ -460,7 +560,7 @@ export function createReceiptPdf(booking) {
     .text(
       '+91 63787 88998  •  Thank you for creating with us.',
       left,
-      footerY + 27
+      footerY + 24
     )
 
   document
@@ -470,17 +570,24 @@ export function createReceiptPdf(booking) {
     .text(
       'This is a computer-generated receipt and does not require a signature.',
       right - 280,
-      footerY + 19,
+      footerY + 16,
       {
         width: 280,
         align: 'right',
       }
     )
 
-  // Bottom accent
+  // --------------------------------------------------
+  // BOTTOM ACCENT
+  // --------------------------------------------------
+
   document
     .rect(0, 835, 595, 7)
     .fill(colors.orange)
+
+  // --------------------------------------------------
+  // END PDF
+  // --------------------------------------------------
 
   document.end()
 

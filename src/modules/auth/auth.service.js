@@ -43,7 +43,8 @@ export function signSession(user) {
 export function setSessionCookie(res, token) {
   res.cookie(cookieName, token, {
     httpOnly: true,
-    sameSite: env.cookieSameSite,
+    // sameSite: env.cookieSameSite,
+    sameSite: 'none',
     secure: env.nodeEnv === 'production',
     maxAge: env.sessionDays * 24 * 60 * 60 * 1000,
     path: '/',
@@ -53,7 +54,8 @@ export function setSessionCookie(res, token) {
 export function clearSessionCookie(res) {
   res.clearCookie(cookieName, {
     httpOnly: true,
-    sameSite: env.cookieSameSite,
+    // sameSite: env.cookieSameSite,
+    sameSite: 'none',
     secure: env.nodeEnv === 'production',
     path: '/',
   })

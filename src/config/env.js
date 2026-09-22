@@ -12,7 +12,7 @@ export const env = Object.freeze({
   jwtSecret: process.env.JWT_SECRET || 'local-only-change-this-secret',
   sessionDays: integer(process.env.SESSION_DAYS, 7),
   cookieSameSite: process.env.COOKIE_SAME_SITE || 'lax',
-  frontendOrigins: list(process.env.FRONTEND_ORIGINS, 'http://localhost:5173,http://127.0.0.1:5173'),
+  frontendOrigins: list(process.env.FRONTEND_ORIGINS, 'http://localhost:5173,http://127.0.0.1:5173,https://gvrp534f-5173.inc1.devtunnels.ms'),
   adminName: process.env.ADMIN_NAME || 'Garima',
   adminEmail: String(process.env.ADMIN_EMAIL || 'admin@brushandcolours.in').trim().toLowerCase(),
   adminPassword: process.env.ADMIN_PASSWORD || '',
